@@ -76,3 +76,66 @@ class ScaledDotProductAttention(nn.Module):
         out = torch.matmul(attn, V)                                  # final vector [B, h, Tq, d_k]
         return out, attn
 
+class MultiHeadAttention(nn.Module):
+    """
+    Multi-Head Attention layer.
+
+    Args:
+        d_model (int): embedding dimension.
+        num_heads (int): number of parallel attention heads.
+        dropout (float): dropout on attention weights.
+
+    Input shape:
+        x_q, x_kv: [B, T, d_model]
+    Output shape:
+        out: [B, T, d_model]
+    """
+
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        self.d_model = d_model
+        self.h = num_heads
+        self.d_k = d_model // num_heads
+
+        # Linear projections for queries, keys, values
+        self.Wq = nn.Linear(d_model, d_model)
+        self.Wk = nn.Linear(d_model, d_model)
+        self.Wv = nn.Linear(d_model, d_model)
+
+        # Output projection
+        self.Wo = nn.Linear(d_model, d_model)
+
+        self.attn = ScaledDotProductAttention(self.d_k, dropout)
+        self.drop = nn.Dropout(dropout)
+
+    def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Split last dim (d_model) into (num_heads, d_k).
+        x: [B, T, d_model] -> [B, h, T, d_k]
+        """
+        B, T, _ = x.shape
+        return x.view(B, T, self.h, self.d_k).transpose(1, 2)
+
+    def _merge_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Merge heads back: [B, h, T, d_k] -> [B, T, d_model]
+        """
+        B, h, T, d_k = x.shape
+        return x.transpose(1, 2).contiguous().view(B, T, h * d_k)
+
+    def forward(self, x_q: torch.Tensor, x_kv: torch.Tensor,
+                attn_mask: torch.Tensor | None = None):
+        # Project to Q,K,V
+        Q = self._split_heads(self.Wq(x_q))  # [B,h,Tq,d_k]
+        K = self._split_heads(self.Wk(x_kv)) # [B,h,Tk,d_k]
+        V = self._split_heads(self.Wv(x_kv)) # [B,h,Tk,d_k]
+
+        # Apply scaled dot-product attention
+        out, attn = self.attn(Q, K, V, attn_mask)  # out: [B,h,Tq,d_k]
+
+        # Merge heads and project
+        out = self._merge_heads(out)   # [B,Tq,d_model]
+        out = self.Wo(out)             # final linear projection
+        return self.drop(out), attn
+
