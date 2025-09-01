@@ -159,3 +159,127 @@ class DecoderLayer(nn.Module):
         y = self.norm3(y + self.drop(ffn_out))
 
         return y
+
+class Decoder(nn.Module):
+    """
+    Full Transformer Decoder:
+      - Token embedding + positional encoding
+      - Stack of N DecoderLayer blocks (masked self-attn + cross-attn + FFN)
+    """
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int = 512,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        d_ff: int = 2048,
+        dropout: float = 0.1,
+        pad_id: int = 0,
+    ):
+        super().__init__()
+        self.pad_id = pad_id
+        self.embed = nn.Embedding(vocab_size, d_model)
+        self.pos = PositionalEncoding(d_model, dropout=dropout)
+        self.layers = nn.ModuleList(
+            [DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)]
+        )
+        self.norm = nn.LayerNorm(d_model)
+
+    def make_self_mask(self, tgt_tokens: torch.Tensor) -> torch.Tensor:
+        """Combine look-ahead mask with target padding mask. Returns [B,1,T,T]."""
+        T = tgt_tokens.size(1)
+        look_ahead = DecoderLayer.make_look_ahead_mask(T, device=tgt_tokens.device)   # [1,1,T,T]
+        pad_mask  = DecoderLayer.make_tgt_padding_mask(tgt_tokens, self.pad_id)       # [B,1,T,T]
+        return look_ahead | pad_mask
+
+    @staticmethod
+    def make_cross_mask(tgt_tokens: torch.Tensor, src_tokens: torch.Tensor, pad_id_src: int) -> torch.Tensor:
+        """Mask encoder padding positions for cross-attention. Returns [B,1,T_dec,T_enc]."""
+        return DecoderLayer.make_cross_padding_mask(tgt_tokens, src_tokens, pad_id_src)
+
+    def forward(
+        self,
+        tgt_tokens: torch.Tensor,       # [B, T_dec]
+        memory: torch.Tensor,           # [B, T_enc, d_model]
+        self_attn_mask: torch.Tensor,   # [B,1,T_dec,T_dec]
+        cross_attn_mask: torch.Tensor   # [B,1,T_dec,T_enc]
+    ) -> torch.Tensor:
+        y = self.embed(tgt_tokens)      # [B,T,D]
+        y = self.pos(y)
+        for layer in self.layers:
+            y = layer(y, memory, self_attn_mask, cross_attn_mask)
+        return self.norm(y)
+
+
+class Transformer(nn.Module):
+    """
+    Full Encoder-Decoder Transformer with generator head.
+
+    forward(src_tokens, tgt_tokens) returns logits over target vocab for next-token prediction:
+      - We feed decoder with tgt[:, :-1] (teacher forcing)
+      - We output logits for positions predicting tgt[:, 1:]
+    """
+    def __init__(
+        self,
+        src_vocab_size: int,
+        tgt_vocab_size: int,
+        d_model: int = 512,
+        num_layers_enc: int = 6,
+        num_layers_dec: int = 6,  
+        num_heads: int = 8,
+        d_ff: int = 2048,
+        dropout: float = 0.1,
+        pad_id_src: int = 0,
+        pad_id_tgt: int = 0,
+    ):
+        super().__init__()
+        self.pad_id_src = pad_id_src
+        self.pad_id_tgt = pad_id_tgt
+
+        self.encoder = Encoder(
+            vocab_size=src_vocab_size,
+            d_model=d_model,
+            num_layers=num_layers_enc,
+            num_heads=num_heads,
+            d_ff=d_ff,
+            dropout=dropout,
+            pad_id=pad_id_src,
+        )
+        self.decoder = Decoder(
+            vocab_size=tgt_vocab_size,
+            d_model=d_model,
+            num_layers=num_layers_dec,
+            num_heads=num_heads,
+            d_ff=d_ff,
+            dropout=dropout,
+            pad_id=pad_id_tgt,
+        )
+        self.generator = nn.Linear(d_model, tgt_vocab_size)
+
+    def encode(self, src_tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (memory, src_mask)."""
+        src_mask = self.encoder.make_src_padding_mask(src_tokens, self.pad_id_src)  # [B,1,S,S]
+        memory = self.encoder(src_tokens, src_mask)  # [B,S,D]
+        return memory, src_mask
+
+    def decode(self, tgt_tokens_in: torch.Tensor, memory: torch.Tensor, src_tokens: torch.Tensor) -> torch.Tensor:
+        """Run decoder and return hidden states [B,T_dec,D]."""
+        self_mask  = self.decoder.make_self_mask(tgt_tokens_in)  # [B,1,T,T]
+        cross_mask = self.decoder.make_cross_mask(tgt_tokens_in, src_tokens, self.pad_id_src)  # [B,1,T_dec,T_enc]
+        return self.decoder(tgt_tokens_in, memory, self_mask, cross_mask)
+
+    def forward(self, src_tokens: torch.Tensor, tgt_tokens: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            src_tokens: [B, S]
+            tgt_tokens: [B, T] including BOS at position 0 (and EOS/pad later)
+
+        Returns:
+            logits: [B, T-1, vocab_tgt] (for predicting tokens 1..T-1)
+        """
+        memory, _ = self.encode(src_tokens)
+        # Teacher forcing: input to decoder excludes the last token
+        tgt_in = tgt_tokens[:, :-1]            # [B, T-1]
+        dec_h = self.decode(tgt_in, memory, src_tokens)  # [B, T-1, D]
+        logits = self.generator(dec_h)         # [B, T-1, Vtgt]
+        return logits
