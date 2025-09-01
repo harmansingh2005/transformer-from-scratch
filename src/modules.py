@@ -78,7 +78,7 @@ class ScaledDotProductAttention(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     """
-    Multi-Head Attention layer.
+    Multi-Head Attention layer*.
 
     Args:
         d_model (int): embedding dimension.
@@ -138,4 +138,33 @@ class MultiHeadAttention(nn.Module):
         out = self._merge_heads(out)   # [B,Tq,d_model]
         out = self.Wo(out)             # final linear projection
         return self.drop(out), attn
+
+
+class PositionwiseFeedForward(nn.Module):
+    """
+    Position-wise Feed-Forward Network.
+
+    Applied independently to each token position:
+      FFN(x) = max(0, xW1 + b1)W2 + b2   (paper uses ReLU)
+
+    Args:
+        d_model (int): input/output dimension (must match embedding size).
+        d_ff (int): hidden layer size (usually 4 * d_model).
+        dropout (float): dropout probability.
+
+    Shape:
+        Input:  [B, T, d_model]
+        Output: [B, T, d_model]
+    """
+
+    def __init__(self, d_model: int, d_ff: int = 2048, dropout: float = 0.1):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_ff)
+        self.linear2 = nn.Linear(d_ff, d_model)
+        self.act = nn.ReLU()
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear2(self.drop(self.act(self.linear1(x))))
+
 
