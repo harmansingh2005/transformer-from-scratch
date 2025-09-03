@@ -66,14 +66,14 @@ class ScaledDotProductAttention(nn.Module):
         self.scale = 1.0 / math.sqrt(d_k)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor,
-                attn_mask: torch.Tensor | None = None):
+    def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, attn_mask: torch.Tensor | None = None):
         scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale  # Attention scores [B,h,Tq,Tk]
         if attn_mask is not None:
-            scores = scores.masked_fill(attn_mask, float("-inf"))
-        attn = torch.softmax(scores, dim=-1)                         # Normalization(softmax)
+            neg_large = torch.finfo(scores.dtype).min
+            scores = scores.masked_fill(attn_mask, neg_large)
+        attn = torch.softmax(scores, dim=-1) # Normalization 
         attn = self.drop(attn)
-        out = torch.matmul(attn, V)                                  # final vector [B, h, Tq, d_k]
+        out = torch.matmul(attn, V) # Attention final output
         return out, attn
 
 class MultiHeadAttention(nn.Module):

@@ -88,7 +88,7 @@ class Encoder(nn.Module):
         Returns:
             memory: [B, T, d_model] encoded representations
         """
-        x = self.embed(src_tokens)        # [B, T, d_model]
+        x = self.embed(src_tokens) * (self.embed.embedding_dim ** 0.5)       # [B, T, d_model]
         x = self.pos(x)                   # add positional encodings
         for layer in self.layers:
             x = layer(x, src_mask)
@@ -199,12 +199,12 @@ class Decoder(nn.Module):
 
     def forward(
         self,
-        tgt_tokens: torch.Tensor,       # [B, T_dec]
-        memory: torch.Tensor,           # [B, T_enc, d_model]
-        self_attn_mask: torch.Tensor,   # [B,1,T_dec,T_dec]
-        cross_attn_mask: torch.Tensor   # [B,1,T_dec,T_enc]
+        tgt_tokens: torch.Tensor,
+        memory: torch.Tensor,
+        self_attn_mask: torch.Tensor,
+        cross_attn_mask: torch.Tensor
     ) -> torch.Tensor:
-        y = self.embed(tgt_tokens)      # [B,T,D]
+        y = self.embed(tgt_tokens) * (self.embed.embedding_dim ** 0.5)      # [B,T,D]
         y = self.pos(y)
         for layer in self.layers:
             y = layer(y, memory, self_attn_mask, cross_attn_mask)
@@ -254,7 +254,8 @@ class Transformer(nn.Module):
             dropout=dropout,
             pad_id=pad_id_tgt,
         )
-        self.generator = nn.Linear(d_model, tgt_vocab_size)
+        self.generator = nn.Linear(d_model, tgt_vocab_size)  # Final linear layer
+        self.generator.weight = self.decoder.embed.weight  # weight tying
 
     def encode(self, src_tokens: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns (memory, src_mask)."""
