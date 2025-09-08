@@ -25,10 +25,6 @@ def train_sentencepiece(corpus_paths, model_prefix, vocab_size=8000, character_c
     )
 
 class ParallelTextDataset(Dataset):
-    """
-    Generic parallel data loader using a shared SentencePiece model.
-    lines_src/lines_tgt are lists of strings aligned by index.
-    """
     def __init__(self, lines_src, lines_tgt, spm_model_path, max_len=128):
         assert len(lines_src) == len(lines_tgt)
         self.src = lines_src
