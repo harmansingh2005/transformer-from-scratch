@@ -9,5 +9,28 @@ I trained the model on an English → Spanish dataset (~127 MB from Tableau), ru
 ## The goal of this project is twofold:
 
     - Demonstrate a faithful reproduction of the seminal Transformer model.
-
     - Showcase its effectiveness on real translation tasks even with modest data and compute.
+
+## Key Features
+
+- **Full Transformer encoder–decoder** with multi-head attention and position-wise feed-forward layers.
+- **Positional encodings** implemented exactly as in the paper.
+- **Scaled dot-product attention** with parallel multi-head mechanism.
+- **Residual connections + layer normalization** on all sub-layers.
+- **Label smoothing** and dropout regularization.
+- **Training loop from scratch** (no external seq2seq frameworks).
+- **Greedy decoding** for inference.
+
+## Training Details
+
+- **Dataset:** ~127 MB parallel corpus (English ↔ Spanish) collected from Tableau.
+- **Model size:** identical to the Transformer (base/small) in the paper.
+- **Layers:** 6 encoder + 6 decoder.
+- **Embedding dim:** 512.
+- **FFN inner dim:** 2048.
+- **Attention heads:** 8.
+- **Dropout:** 0.1.
+- **Training:** 20 epochs.
+- **Optimizer:** Adam with custom learning rate schedule (warm-up steps = 4000).
+- **Hardware:** Trained on an NVIDIA RTX 3090 Ti GPU.
+- **Results:** Achieved very fluent translations on test examples, confirming the power of attention-only architectures.
