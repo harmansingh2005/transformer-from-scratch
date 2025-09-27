@@ -11,7 +11,7 @@ I trained the model on an English → Spanish dataset (~127 MB from Tableau), ru
     - Demonstrate a faithful reproduction of the seminal Transformer model.
     - Showcase its effectiveness on real translation tasks even with modest data and compute.
 
-## Key Features
+# Key Features
 
 - **Full Transformer encoder–decoder** with multi-head attention and position-wise feed-forward layers.
 - **Positional encodings** implemented exactly as in the paper.
@@ -33,4 +33,13 @@ I trained the model on an English → Spanish dataset (~127 MB from Tableau), ru
 - **Training:** 20 epochs.
 - **Optimizer:** Adam with custom learning rate schedule (warm-up steps = 4000).
 - **Hardware:** Trained on an NVIDIA RTX 3090 Ti GPU.
+- **Loss & Optimization Setup:**
+  ```python
+  criterion = nn.CrossEntropyLoss(ignore_index=pad_id)
+  optimizer = Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)  # Lower LR for stability
+  scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)  # No verbose
+  grad_clip = 1.0
+  epochs = 20
+
 - **Results:** Achieved very fluent translations on test examples, confirming the power of attention-only architectures.
+
