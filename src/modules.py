@@ -1,107 +1,105 @@
-import math
-import torch  # type: ignore
+import torch
 import torch.nn as nn # type: ignore
+import math
 
+class InputEmbedding(nn.Module):
+    def __init__(self, vocab_size, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.embeddings = nn.Embedding(vocab_size, d_model)
 
-def positional_encoding(x, max_len= 10000):
-    """
-    Adds positional encodings directly to input tensor `x`.
-    x shape: [B, T, d_model]
-    """
-    B, T, d_model = x.size()
+    def forward(self, x):
+        return self.embeddings(x) * math.sqrt(self.d_model)
 
-    pe = torch.zeros(max_len, d_model, device=x.device, dtype=x.dtype)
-    position = torch.arange(0, max_len, dtype=torch.float32, device=x.device).unsqueeze(1)
-    div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32, device=x.device) * 
-                         (-math.log(10000.0) / d_model))
-    
-    pe[:, 0::2] = torch.sin(position * div_term)
-    pe[:, 1::2] = torch.cos(position * div_term)
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=10000, dropout=0.1):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
 
-    pos = pe[:T, :].unsqueeze(0) 
-    return x + pos
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
+                             (-math.log(10000.0) / d_model))
+
+        pe[:, 0::2] = torch.sin(position * div_term)   # even indices
+        pe[:, 1::2] = torch.cos(position * div_term)   # odd indices
+        pe = pe.unsqueeze(0)  # shape: (1, max_len, d_model)
+
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        seq_len = x.size(1)
+        x = x + self.pe[:, :seq_len, :]
+        return self.dropout(x)
 
 class ScaledDotProductAttention(nn.Module):
-
-    def __init__(self, d_k, dropout = 0.1):
+    def __init__(self, d_k, dropout=0.1):
         super().__init__()
         self.scale = 1.0 / math.sqrt(d_k)
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, Q, K, V, attn_mask: torch.Tensor | None = None):
-        
-        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale  # Attention scores [B,h,Tq,Tk]
-        if attn_mask is not None:
+    def forward(self, Q, K, V, mask=None):
+        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
+        if mask is not None:
             neg_large = torch.finfo(scores.dtype).min
-            scores = scores.masked_fill(attn_mask, neg_large)
-        attn = torch.softmax(scores, dim=-1) # Normalization 
-        attn = self.drop(attn)
-        output = torch.matmul(attn, V) # Attention final output
+            scores = scores.masked_fill(mask, neg_large)
+        attn = torch.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+        output = torch.matmul(attn, V)
         return output
 
-class MultiHeadAttention(nn.Module):
-    """
-    Multi-Head Attention layer*.
 
-    Args:
-        d_model (int): embedding dimension.
-        num_heads (int): number of parallel attention heads.
-        dropout (float): dropout on attention weights.
-
-    Input shape:
-        x_q, x_kv: [B, T, d_model]
-    Output shape:
-        out: [B, T, d_model]
-    """
-
-    def __init__(self, d_model, num_heads, dropout = 0.1):
+class MultiheadAttention(nn.Module):
+    def __init__(self, d_model, num_heads, dropout=0.1):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
         self.d_model = d_model
-        self.h = num_heads
+        self.num_heads = num_heads
         self.d_k = d_model // num_heads
 
-        # Linear layers
-        self.Wq = nn.Linear(d_model, d_model)
-        self.Wk = nn.Linear(d_model, d_model)
-        self.Wv = nn.Linear(d_model, d_model)
-
-        # Final linear layer
-        self.Wo = nn.Linear(d_model, d_model)
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
 
         self.attn = ScaledDotProductAttention(self.d_k, dropout)
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
-    def _split_heads(self, x):
-        B, T, _ = x.shape
-        return x.view(B, T, self.h, self.d_k).transpose(1, 2)
+    def split_heads(self, x, batch_size):
+        # (B, T, D) -> (B, h, T, d_k)
+        return x.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
 
-    def _merge_heads(self, x):
-        B, h, T, d_k = x.shape
-        return x.transpose(1, 2).contiguous().view(B, T, h * d_k)
+    def combine_heads(self, x, batch_size):
+        # (B, h, T, d_k) -> (B, T, D)
+        return x.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
 
-    def forward(self, x_q, x_kv, attn_mask: torch.Tensor | None = None):
-        Q = self._split_heads(self.Wq(x_q))  # [B,h,Tq,d_k]
-        K = self._split_heads(self.Wk(x_kv)) # [B,h,Tk,d_k]
-        V = self._split_heads(self.Wv(x_kv)) # [B,h,Tk,d_k]
+    def forward(self, query, key, value, mask=None):
+        B = query.size(0)
 
-        out, attn = self.attn(Q, K, V, attn_mask)  # out: [B,h,Tq,d_k]
+        Q = self.split_heads(self.W_q(query), B)
+        K = self.split_heads(self.W_k(key), B)
+        V = self.split_heads(self.W_v(value), B)
 
-        out = self._merge_heads(out)  
-        out = self.Wo(out)            
-        return self.drop(out), attn
+        out = self.attn(Q, K, V, mask)
+        out = self.combine_heads(out, B)
+        out = self.W_o(out)
+        return self.dropout(out)
 
-
-class PositionwiseFeedForward(nn.Module):
-    # FeedForward Neural Network
-    def __init__(self, d_model, d_ff = 2048, dropout = 0.1):
+class FeedForward(nn.Module):
+    def __init__(self, d_model, d_ff=2048, dropout=0.1):
         super().__init__()
         self.linear1 = nn.Linear(d_model, d_ff)
         self.linear2 = nn.Linear(d_ff, d_model)
-        self.act = nn.ReLU()
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        return self.linear2(self.drop(self.act(self.linear1(x))))
+        return self.linear2(self.dropout(torch.relu(self.linear1(x))))
 
+class ResidualConnection(nn.Module):
+    def __init__(self, d_model, dropout=0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
 
+    def forward(self, x, sublayer):
+        return x + self.dropout(sublayer(self.norm(x)))

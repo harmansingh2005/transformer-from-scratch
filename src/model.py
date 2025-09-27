@@ -1,162 +1,106 @@
 import math
-import torch # type: ignore
-import torch.nn as nn # type: ignore
-from src.modules import MultiHeadAttention, PositionwiseFeedForward, positional_encoding
+import torch
+import torch.nn as nn
+from .modules import MultiheadAttention, FeedForward, ResidualConnection ,InputEmbedding, PositionalEncoding
 
 
-# ---------------- Encoder ----------------
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+        super().__init__()
+        self.self_attn = MultiheadAttention(d_model, num_heads, dropout)
+        self.ffn = FeedForward(d_model, d_ff, dropout)
+
+        self.rc1 = ResidualConnection(d_model, dropout)
+        self.rc2 = ResidualConnection(d_model, dropout)
+
+    def forward(self, x, mask):
+        x = self.rc1(x, lambda x: self.self_attn(x, x, x, mask))
+        x = self.rc2(x, self.ffn)
+        return x
+
 class Encoder(nn.Module):
-    def __init__(self, vocab_size, d_model=512, num_layers=6, num_heads=8, d_ff=2048, dropout=0.1, pad_id=0):
+    def __init__(self, vocab_size, d_model=512, num_layers=6, num_heads=8, d_ff=2048, dropout=0.1):
         super().__init__()
-        self.pad_id = pad_id
-        self.num_layers = num_layers
+        self.embed = InputEmbedding(vocab_size, d_model)
+        self.pos_encoding = PositionalEncoding(d_model, max_len=10000, dropout=dropout)
 
-        self.embed = nn.Embedding(vocab_size, d_model)
-        self.drop = nn.Dropout(dropout)
-        self.norm_final = nn.LayerNorm(d_model)
-        
-        self.self_attn_layers = nn.ModuleList([MultiHeadAttention(d_model, num_heads, dropout) for _ in range(num_layers)])
-        self.ffn_layers       = nn.ModuleList([PositionwiseFeedForward(d_model, d_ff, dropout) for _ in range(num_layers)])
-        self.norm1_layers     = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_layers)])
-        self.norm2_layers     = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_layers)])
-        self.drop_layers      = nn.ModuleList([nn.Dropout(dropout) for _ in range(num_layers)])
+        self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
+        self.norm = nn.LayerNorm(d_model)
 
-    @staticmethod
-    def make_src_padding_mask(src_tokens, pad_id):
-        # True = mask. Shape [B,1,T,T]
-        pad = (src_tokens == pad_id)                 
-        return pad.unsqueeze(1).expand(-1, src_tokens.size(1), -1).unsqueeze(1)
+    def forward(self, src, mask):
+        x = self.embed(src)
+        x = self.pos_encoding(x)
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
 
-    def forward(self, src_tokens, src_mask=None):
-        x = self.embed(src_tokens) * math.sqrt(self.embed.embedding_dim)    
-        x = positional_encoding(x)
-        x = self.drop(x)
+class DecoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+        super().__init__()
+        self.self_attn = MultiheadAttention(d_model, num_heads, dropout)
+        self.cross_attn = MultiheadAttention(d_model, num_heads, dropout)
+        self.ffn = FeedForward(d_model, d_ff, dropout)
 
-        for i in range(self.num_layers):
-            attn_out, _ = self.self_attn_layers[i](x, x, attn_mask=src_mask) 
-            x = self.norm1_layers[i](x + self.drop_layers[i](attn_out))
+        self.rc1 = ResidualConnection(d_model, dropout)
+        self.rc2 = ResidualConnection(d_model, dropout)
+        self.rc3 = ResidualConnection(d_model, dropout)
 
-            ffn_out = self.ffn_layers[i](x)                                   
-            x = self.norm2_layers[i](x + self.drop_layers[i](ffn_out))
+    def forward(self, x, memory, self_mask, cross_mask):
+        x = self.rc1(x, lambda x: self.self_attn(x, x, x, self_mask))
+        x = self.rc2(x, lambda x: self.cross_attn(x, memory, memory, cross_mask))
+        x = self.rc3(x, self.ffn)
+        return x
 
-        return self.norm_final(x)
-
-
-# ---------------- Decoder ----------------
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, d_model=512, num_layers=6, num_heads=8, d_ff=2048, dropout=0.1, pad_id=0):
+    def __init__(self, vocab_size, d_model=512, num_layers=6, num_heads=8, d_ff=2048, dropout=0.1):
         super().__init__()
-        self.pad_id = pad_id
-        self.num_layers = num_layers
+        self.embed = InputEmbedding(vocab_size, d_model)
+        self.pos_encoding = PositionalEncoding(d_model, max_len=10000, dropout=dropout)
 
-        self.embed = nn.Embedding(vocab_size, d_model)
-        self.drop = nn.Dropout(dropout)
-        self.norm_final = nn.LayerNorm(d_model)
+        self.layers = nn.ModuleList([DecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
+        self.norm = nn.LayerNorm(d_model)
 
-        # stacks (no separate DecoderLayer class)
-        self.self_attn_layers  = nn.ModuleList([MultiHeadAttention(d_model, num_heads, dropout) for _ in range(num_layers)])
-        self.cross_attn_layers = nn.ModuleList([MultiHeadAttention(d_model, num_heads, dropout) for _ in range(num_layers)])
-        self.ffn_layers        = nn.ModuleList([PositionwiseFeedForward(d_model, d_ff, dropout) for _ in range(num_layers)])
-        self.norm1_layers      = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_layers)])
-        self.norm2_layers      = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_layers)])
-        self.norm3_layers      = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_layers)])
-        self.drop_layers       = nn.ModuleList([nn.Dropout(dropout) for _ in range(num_layers)])
+    def forward(self, tgt, memory, self_mask, cross_mask):
+        x = self.embed(tgt)
+        x = self.pos_encoding(x)
+        for layer in self.layers:
+            x = layer(x, memory, self_mask, cross_mask)
+        return self.norm(x)
 
-    @staticmethod
-    def make_look_ahead_mask(T, device=None):
-        # [1,1,T,T] True above diagonal (block future)
-        m = torch.triu(torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1)
-        return m.unsqueeze(0).unsqueeze(0)
-
-    def make_tgt_padding_mask(self, tgt_tokens):
-        pad = (tgt_tokens == self.pad_id)             # [B,T]
-        return pad.unsqueeze(1).expand(-1, tgt_tokens.size(1), -1).unsqueeze(1)  # [B,1,T,T]
-
-    @staticmethod
-    def make_cross_padding_mask(tgt_tokens, src_tokens, pad_id_src):
-        # [B,1,T_dec,T_enc] True where src is PAD
-        src_pad = (src_tokens == pad_id_src)  # [B,S]
-        return src_pad.unsqueeze(1).expand(-1, tgt_tokens.size(1), -1).unsqueeze(1)
-
-    def make_self_mask(self, tgt_tokens):
-        T = tgt_tokens.size(1)
-        la  = self.make_look_ahead_mask(T, device=tgt_tokens.device)   # [1,1,T,T]
-        pad = self.make_tgt_padding_mask(tgt_tokens)                   # [B,1,T,T]
-        return la | pad
-
-    def forward(self, tgt_tokens, memory, self_attn_mask, cross_attn_mask):
-        y = self.embed(tgt_tokens) * math.sqrt(self.embed.embedding_dim)  # [B,T,D]
-        y = positional_encoding(y)
-        y = self.drop(y)
-
-        for i in range(self.num_layers):
-            self_out, _ = self.self_attn_layers[i](y, y, attn_mask=self_attn_mask)      # [B,T,D]
-            y = self.norm1_layers[i](y + self.drop_layers[i](self_out))
-
-            cross_out, _ = self.cross_attn_layers[i](y, memory, attn_mask=cross_attn_mask)
-            y = self.norm2_layers[i](y + self.drop_layers[i](cross_out))
-
-            ffn_out = self.ffn_layers[i](y)
-            y = self.norm3_layers[i](y + self.drop_layers[i](ffn_out))
-
-        return self.norm_final(y)
-
-
-# ---------------- Full Transformer ----------------
 class Transformer(nn.Module):
-    def __init__(
-        self,
-        src_vocab_size,
-        tgt_vocab_size,
-        d_model=512,
-        num_layers_enc=6,
-        num_layers_dec=6,
-        num_heads=8,
-        d_ff=2048,
-        dropout=0.1,
-        pad_id_src=0,
-        pad_id_tgt=0,
-    ):
+    def __init__(self, src_vocab_size, tgt_vocab_size,
+                 d_model=512, num_layers_enc=6, num_layers_dec=6,
+                 num_heads=8, d_ff=2048, dropout=0.1):
         super().__init__()
-        self.pad_id_src = pad_id_src
-        self.pad_id_tgt = pad_id_tgt
-
-        self.encoder = Encoder(
-            vocab_size=src_vocab_size,
-            d_model=d_model,
-            num_layers=num_layers_enc,
-            num_heads=num_heads,
-            d_ff=d_ff,
-            dropout=dropout,
-            pad_id=pad_id_src,
-        )
-        self.decoder = Decoder(
-            vocab_size=tgt_vocab_size,
-            d_model=d_model,
-            num_layers=num_layers_dec,
-            num_heads=num_heads,
-            d_ff=d_ff,
-            dropout=dropout,
-            pad_id=pad_id_tgt,
-        )
+        self.encoder = Encoder(src_vocab_size, d_model, num_layers_enc, num_heads, d_ff, dropout)
+        self.decoder = Decoder(tgt_vocab_size, d_model, num_layers_dec, num_heads, d_ff, dropout)
 
         self.generator = nn.Linear(d_model, tgt_vocab_size, bias=False)
         # weight tying with decoder embedding
-        self.generator.weight = self.decoder.embed.weight
+        self.generator.weight = self.decoder.embed.embeddings.weight
 
-    def encode(self, src_tokens):
-        src_mask = self.encoder.make_src_padding_mask(src_tokens, self.pad_id_src)  # [B,1,S,S]
-        memory = self.encoder(src_tokens, src_mask)                                  # [B,S,D]
+    def make_pad_mask(self, tokens, pad_id):
+        # True = mask, shape [B,1,1,T]
+        return (tokens == pad_id).unsqueeze(1).unsqueeze(2)
+
+    def make_look_ahead_mask(self, size, device):
+        # upper-triangular mask
+        return torch.triu(torch.ones(size, size, dtype=torch.bool, device=device), diagonal=1).unsqueeze(0).unsqueeze(0)
+
+    def encode(self, src, pad_id):
+        src_mask = self.make_pad_mask(src, pad_id)
+        memory = self.encoder(src, src_mask)
         return memory, src_mask
 
-    def decode(self, tgt_tokens_in, memory, src_tokens):
-        self_mask  = self.decoder.make_self_mask(tgt_tokens_in)                                   # [B,1,T,T]
-        cross_mask = self.decoder.make_cross_padding_mask(tgt_tokens_in, src_tokens, self.pad_id_src)  # [B,1,T,S]
-        return self.decoder(tgt_tokens_in, memory, self_mask, cross_mask)
+    def decode(self, tgt, memory, src, pad_id_src, pad_id_tgt):
+        self_mask = self.make_pad_mask(tgt, pad_id_tgt) | self.make_look_ahead_mask(tgt.size(1), tgt.device)
+        cross_mask = self.make_pad_mask(src, pad_id_src)
+        return self.decoder(tgt, memory, self_mask, cross_mask)
 
-    def forward(self, src_tokens, tgt_tokens):
-        memory, _ = self.encode(src_tokens)
-        tgt_in = tgt_tokens[:, :-1]              
-        dec_h = self.decode(tgt_in, memory, src_tokens)
-        logits = self.generator(dec_h)           
+    def forward(self, src, tgt, pad_id_src=0, pad_id_tgt=0):
+        memory, _ = self.encode(src, pad_id_src)
+        tgt_in = tgt[:, :-1]  # remove last token for teacher forcing
+        dec_out = self.decode(tgt_in, memory, src, pad_id_src, pad_id_tgt)
+        logits = self.generator(dec_out)
         return logits
