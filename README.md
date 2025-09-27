@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
+\usepackage{fontspec} % Unicode support (XeLaTeX/LuaLaTeX)
+\setmainfont{Latin Modern Roman}
 \usepackage{hyperref}
-\usepackage{graphicx}
 \usepackage{geometry}
 \usepackage{longtable}
 \geometry{margin=1in}
@@ -13,9 +14,9 @@
 \maketitle
 
 \section*{Overview}
-This project re-creates the legendary Transformer model exactly as proposed in the original paper \emph{Attention Is All You Need} (Vaswani et al., 2017). It uses the same architecture, hyperparameters, and training strategy as the ``small Transformer'' configuration.  
+This project re-creates the legendary Transformer model exactly as proposed in the original paper \emph{Attention Is All You Need} (Vaswani et al., 2017). It uses the same architecture, hyperparameters, and training strategy as the ``small Transformer'' configuration.
 
-The model was trained on an English $\rightarrow$ Spanish dataset ($\sim$127 MB from Tableau) for \textbf{20 epochs}, achieving surprisingly fluent and high-quality translations.  
+The model was trained on an English $\rightarrow$ Spanish dataset ($\sim$127 MB from Tableau) for \textbf{20 epochs}, achieving surprisingly fluent and high-quality translations.
 
 Goals of the project:
 \begin{itemize}
@@ -46,7 +47,7 @@ Goals of the project:
         \item Dropout = 0.1
     \end{itemize}
     \item[Training:] 20 epochs
-    \item[Optimizer:] Adam with learning rate warm-up (4000 steps)
+    \item[Optimizer:] Adam with learning-rate warm-up (4000 steps)
     \item[Results:] Produced very fluent translations, confirming the effectiveness of attention-only architectures.
 \end{description}
 
@@ -102,12 +103,11 @@ I love learning languages. & Me encanta aprender idiomas. \\
 \end{longtable}
 
 \section*{Reference}
-Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., \& Polosukhin, I. (2017). \emph{Attention Is All You Need}. NeurIPS 2017.  
-\href{https://arxiv.org/abs/1706.03762}{Paper link}
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., \& Polosukhin, I. (2017). \emph{Attention Is All You Need}. NeurIPS 2017.\\
+\href{https://arxiv.org/abs/1706.03762}{arXiv:1706.03762}
 
 \section*{Acknowledgements}
-Inspired by the groundbreaking work in \emph{Attention Is All You Need}.  
+Inspired by the groundbreaking work in \emph{Attention Is All You Need}.\\
 Special thanks to the open-source PyTorch community.
 
 \end{document}
-
