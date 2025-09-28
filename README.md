@@ -21,7 +21,7 @@ I trained the model on an English → Spanish dataset (~127 MB from Tableau), ru
 - **Training loop from scratch** (no external seq2seq frameworks).
 - **Greedy decoding** for inference.
 
-## Training Details
+# Training Details
 
 - **Dataset:** ~127 MB parallel corpus (English ↔ Spanish) collected from Tableau.
 - **Model size:** identical to the Transformer (base/small) in the paper.
@@ -42,4 +42,17 @@ I trained the model on an English → Spanish dataset (~127 MB from Tableau), ru
   epochs = 20
 
 - **Results:** Achieved very fluent translations on test examples, confirming the power of attention-only architectures.
+
+# Usage
+
+Translate a sentence from English → Spanish:
+```bash
+python -m src.predict "How are you today?"
+# -> "¿Cómo estás hoy?"
+```
+#  Reference
+
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł., & Polosukhin, I. (2017).  
+**Attention Is All You Need.** *NeurIPS 2017*.  
+[Paper Link](https://arxiv.org/abs/1706.03762)
 
