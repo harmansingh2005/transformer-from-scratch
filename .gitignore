@@ -16,9 +16,14 @@ venv/
 logs/
 runs/
 
-# Data
-data/
-.cache/
+# Data (keep folder via .gitkeep)
+data/**
+raw/**
+
+
+# Checkpoints folder but not directory placeholder
+checkpoints/**
+!checkpoints/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints/
